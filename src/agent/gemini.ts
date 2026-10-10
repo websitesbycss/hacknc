@@ -22,14 +22,28 @@ async function generateJson<T>(
   jsonSchema: unknown,
 ): Promise<T | null> {
   try {
-    const res = await ai.models.generateContent({
-      model: config.geminiModel,
-      contents: [{ role: "user", parts }],
-      config: {
-        responseMimeType: "application/json",
-        responseJsonSchema: jsonSchema,
-      },
-    });
+    // Retry temporary overloads (503) and rate limits (429) with backoff
+    let res;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        res = await ai.models.generateContent({
+          model: config.geminiModel,
+          contents: [{ role: "user", parts }],
+          config: {
+            responseMimeType: "application/json",
+            responseJsonSchema: jsonSchema,
+          },
+        });
+        break;
+      } catch (err) {
+        const status = (err as { status?: number }).status;
+        const transient = status === 503 || status === 429;
+        if (!transient || attempt >= 4) throw err;
+        const waitMs = attempt * 5_000;
+        console.log(`[gemini] ${label} got ${status}, retrying in ${waitMs / 1000}s (attempt ${attempt}/3)`);
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
+    }
     const raw = JSON.parse(res.text ?? "");
     const parsed = schema.safeParse(raw);
     if (!parsed.success) {
