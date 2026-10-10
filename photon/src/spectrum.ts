@@ -13,11 +13,18 @@ export type InboundHandler = (msg: Inbound) => Promise<void>;
 type DmSpace = { send: (text: string) => Promise<unknown> };
 let dm: DmSpace | null = null;
 
-// Every proactive text goes through here. Lazily creates and caches the DM space.
-export async function sendToUser(text: string): Promise<void> {
+// Every proactive text goes through here. Returns false instead of throwing when the send
+// fails, so one bad send can't abort a poll batch.
+export async function sendToUser(text: string): Promise<boolean> {
   if (!dm) throw new Error("Spectrum not started; call startSpectrum() first");
   console.log(`[spectrum] -> ${text}`);
-  await dm.send(text);
+  try {
+    await dm.send(text);
+    return true;
+  } catch (err) {
+    console.log("[spectrum] send failed, continuing", (err as Error).message);
+    return false;
+  }
 }
 
 function isUser(senderId: string | undefined): boolean {

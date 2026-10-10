@@ -23,20 +23,25 @@ export async function gmailTick(): Promise<void> {
       markSeen(state.seenGmailIds, id);
       save();
 
-      const email = await getMessageText(id);
-      const analysis = await analyzeEmail(email);
-      if (!analysis) continue;
+      // Per-email try/catch: one bad email must not skip the rest of the batch
+      try {
+        const email = await getMessageText(id);
+        const analysis = await analyzeEmail(email);
+        if (!analysis) continue;
 
-      if (analysis.kind === "event") {
-        await proposeFromEmail(analysis, { gmailId: id, from: email.from, subject: email.subject });
-      } else if (analysis.kind === "receipt" && analysis.receipt) {
-        const r = analysis.receipt;
-        await recordSpend({
-          amount: r.amount,
-          merchant: r.merchant,
-          dedupeKey: `receipt:${r.merchant}:${r.amount}:${new Date().toISOString().slice(0, 10)}`,
-          source: "email receipt",
-        });
+        if (analysis.kind === "event") {
+          await proposeFromEmail(analysis, { gmailId: id, from: email.from, subject: email.subject });
+        } else if (analysis.kind === "receipt" && analysis.receipt) {
+          const r = analysis.receipt;
+          await recordSpend({
+            amount: r.amount,
+            merchant: r.merchant,
+            dedupeKey: `receipt:${r.merchant}:${r.amount}:${new Date().toISOString().slice(0, 10)}`,
+            source: "email receipt",
+          });
+        }
+      } catch (err) {
+        console.log(`[gmail] email ${id} failed, continuing`, (err as Error).message);
       }
     }
   } catch (err) {
@@ -57,12 +62,16 @@ export async function nessieTick(): Promise<void> {
     for (const p of fresh) {
       markSeen(state.seenPurchaseIds, p._id);
       save();
-      await recordSpend({
-        amount: p.amount,
-        merchant: p.description ?? "a purchase",
-        dedupeKey: `purchase:${p._id}`,
-        source: "nessie",
-      });
+      try {
+        await recordSpend({
+          amount: p.amount,
+          merchant: p.description ?? "a purchase",
+          dedupeKey: `purchase:${p._id}`,
+          source: "nessie",
+        });
+      } catch (err) {
+        console.log(`[nessie] purchase ${p._id} failed, continuing`, (err as Error).message);
+      }
     }
   } catch (err) {
     console.log("[nessie] tick failed", err);
